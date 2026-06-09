@@ -1,35 +1,64 @@
-export default async function handler(req, res) {
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET,OPTIONS");
+export default async function onRequest(context) {
+  // 1. Setup CORS Headers
+  const corsHeaders = {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET,OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type",
+  };
 
-  if (req.method === "OPTIONS") return res.status(200).end();
+  // 2. Handle Browser Preflight Options Request
+  if (context.request.method === "OPTIONS") {
+    return new Response(null, { 
+      status: 200, 
+      headers: corsHeaders 
+    });
+  }
 
   try {
-    const { id, s, e } = req.query;
+    // 3. Extract query parameters from Cloudflare request URL
+    const urlObj = new URL(context.request.url);
+    const id = urlObj.searchParams.get("id");
+    const s = urlObj.searchParams.get("s");
+    const e = urlObj.searchParams.get("e");
 
+    // 4. Data Validation Guard
     if (!id) {
-      return res.status(400).json({ error: "missing id" });
+      return new Response(JSON.stringify({ error: "missing id" }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" }
+      });
     }
 
-    const url =
-      s && e
-        ? `https://movish.net/moviebox-embed/tv/${id}/${s}/${e}`
-        : `https://movish.net/moviebox-embed/movie/${id}`;
+    // 5. Dynamic URL Construction
+    const targetUrl = s && e
+      ? `https://movish.net/moviebox-embed/tv/${id}/${s}/${e}`
+      : `https://movish.net/moviebox-embed/movie/${id}`;
 
-    const response = await fetch(url);
+    // 6. Fetch Target Page Content
+    const response = await fetch(targetUrl);
     const html = await response.text();
 
+    // 7. Extract Video String using Regular Expression
     const match = html.match(/<video[^>]+src="([^"]+)"/i);
 
     if (!match) {
-      return res.status(404).json({ error: "not found" });
+      return new Response(JSON.stringify({ error: "not found" }), {
+        status: 404,
+        headers: { ...corsHeaders, "Content-Type": "application/json" }
+      });
     }
 
-    return res.status(200).json({
-      url: match[1]
+    // 8. Return Extracted Link Payload
+    return new Response(JSON.stringify({ url: match[1] }), {
+      status: 200,
+      headers: { ...corsHeaders, "Content-Type": "application/json" }
     });
 
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    // 9. Global Exception Safety Net
+    return new Response(JSON.stringify({ error: err.message }), {
+      status: 500,
+      headers: { ...corsHeaders, "Content-Type": "application/json" }
+    });
   }
 }
