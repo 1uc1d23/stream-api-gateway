@@ -1,23 +1,47 @@
 export async function onRequest(context) {
+  // Handle Preflight CORS Requests (OPTIONS)
+  if (context.request.method === "OPTIONS") {
+    return new Response(null, {
+      status: 200,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+      }
+    });
+  }
+
   const { searchParams } = new URL(context.request.url);
   const id = searchParams.get('id');
+  const s = searchParams.get('s'); // Season number
+  const e = searchParams.get('e'); // Episode number
+
+  // Common response headers for JSON and CORS
+  const responseHeaders = {
+    "Content-Type": "application/json",
+    "Access-Control-Allow-Origin": "*"
+  };
 
   // 1. Validation: Ensure an ID was passed in the URL
   if (!id) {
     return new Response(
-      JSON.stringify({ error: "Missing parameter 'id'. Example: /alpha?id=9502" }), 
-      { status: 400, headers: { "Content-Type": "application/json" } }
+      JSON.stringify({ error: "missing id" }), 
+      { status: 400, headers: responseHeaders }
     );
   }
 
-  // Target streaming provider URL
-  const targetUrl = `https://vidsrc.me/embed/movie?id=${id}`;
+  // 2. Dynamic URL Construction for Movish.net
+  const targetUrl = (s && e)
+    ? `https://movish.net/moviebox-embed/tv/${id}/${s}/${e}`
+    : `https://movish.net/moviebox-embed/movie/${id}`;
 
   try {
-    // 2. Fetch the external webpage safely using Cloudflare's runtime fetch
+    // 3. Fetch Target Content with Browser Headers
     const response = await fetch(targetUrl, {
       headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.5"
       }
     });
 
@@ -27,37 +51,38 @@ export async function onRequest(context) {
 
     const html = await response.text();
 
-    // 3. Extract Stream Links using Regular Expressions (Regex)
-    // This looks for standard source paths, iframe links, or .m3u8/.mp4 stream manifests
-    const streamRegex = /(https?:\/\/[^\s"'`<>]+(?:\.m3u8|\.mp4|embed|source)[^\s"'`<>]*)/g;
-    const matchedLinks = html.match(streamRegex) || [];
+    // 4. Extract STREAMS array using Regular Expression
+    const match = html.match(/const\s+STREAMS\s*=\s*(\[[\s\S]*?\]);/);
 
-    // Clean up matches: Filter duplicates and clean trailing syntax noise
-    const uniqueLinks = [...new Set(matchedLinks)].map(link => {
-      return link.replace(/[\\'\x22]/g, ''); // Removes escaped slashes or stray quotes
-    });
+    if (!match) {
+      return new Response(
+        JSON.stringify({ 
+          error: "STREAMS array not found in HTML source.",
+          snippet: html.slice(0, 300) // Returns a snippet to help you debug in the client if blocked
+        }), 
+        { status: 404, headers: responseHeaders }
+      );
+    }
 
-    // 4. Return the extracted links as JSON
+    // 5. Parse the extracted block and return it
+    const streams = JSON.parse(match[1]);
+
     return new Response(
       JSON.stringify({
         success: true,
         movieId: id,
-        streams: uniqueLinks
+        season: s || null,
+        episode: e || null,
+        streams: streams
       }),
-      {
-        status: 200,
-        headers: {
-          "Content-Type": "application/json",
-          "Access-Control-Allow-Origin": "*" // Allows your frontend application to call this API safely
-        }
-      }
+      { status: 200, headers: responseHeaders }
     );
 
   } catch (error) {
-    // Catch fetch/processing failures cleanly without crashing the server
+    // Catch fetch/processing failures cleanly
     return new Response(
       JSON.stringify({ success: false, error: error.message }),
-      { status: 500, headers: { "Content-Type": "application/json" } }
+      { status: 500, headers: responseHeaders }
     );
   }
 }
