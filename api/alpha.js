@@ -38,8 +38,8 @@ export default async function onRequest(context) {
     const response = await fetch(targetUrl);
     const html = await response.text();
 
-    // 7. Extract Video String using Regular Expression
-    const match = html.match(/<video[^>]+src="([^"]+)"/i);
+    // 7. Extract STREAMS array using Regular Expression
+    const match = html.match(/const\s+STREAMS\s*=\s*(\[[\s\S]*?\]);/);
 
     if (!match) {
       return new Response(JSON.stringify({ error: "not found" }), {
@@ -48,8 +48,10 @@ export default async function onRequest(context) {
       });
     }
 
-    // 8. Return Extracted Link Payload
-    return new Response(JSON.stringify({ url: match[1] }), {
+    // 8. Parse JSON and clean escaped slashes (\/) from the URLs
+    const streams = JSON.parse(match[1]);
+
+    return new Response(JSON.stringify({ streams }), {
       status: 200,
       headers: { ...corsHeaders, "Content-Type": "application/json" }
     });
